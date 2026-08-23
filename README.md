@@ -72,6 +72,42 @@ builds de escritorio de GMS 1.4 son casi siempre VM). El `pkg2zip` compilado
 existe en el propio código así que alcanzaba con no compilar los archivos
 `*_x86.c` ahí) queda disponible en `pkg2zip/` por si hace falta de nuevo.
 
+## Actualización: datos limpios conseguidos, pero es bytecode v15
+
+Se consiguió `game.unx` (211MB) desde un instalador offline de GOG para Linux
+(`.sh` tipo makeself+mojosetup, extraído sin correr el instalador — es un
+script con un `data.zip` pegado al final; el offset real del zip se encontró
+buscando la firma `PK\x03\x04`, no confiando en el valor `OLDSKIP` que reporta
+`--dumpconf`, que no coincidía). El scanner lo confirma como el archivo real:
+
+```
+Nombre mostrado: 'VA-11 Hall-A: Cyberpunk Bartender Action'
+Bytecode version: 15
+Veredicto: Bytecode v15 no soportado por Cinnamon (solo soporta v16 y v17).
+```
+
+Buena noticia: **no está cifrado y no es YYC** (chunk `CODE` presente, 1.2MB)
+— el miedo original quedó resuelto del todo. La mala: es una versión de
+bytecode más vieja que las que Cinnamon soporta. Y esto **no se arregla
+consiguiendo otra plataforma** — la versión de bytecode depende de qué
+build de GameMaker Studio usó Sukeban Games en 2016, no de para qué
+plataforma se exportó, así que Windows/Mac/Android de este mismo juego
+casi seguro también son v15.
+
+Revisando `cinnamon/src/bytecode_versions.h`: no es un límite blando/no
+probado, es arquitectónico — el dispatch de opcodes de la VM en `vm.c` está
+construido enteramente sobre flags de compilación `ENABLE_BC16`/`ENABLE_BC17`,
+sin ningún punto de anclaje para v15. Pero el proyecto padre de Cinnamon,
+[Butterscotch](https://github.com/MrPowerGamerBR/Butterscotch) (AGPL-3.0,
+activo, ~1700 commits), soporta bytecode 8–17 y ya apunta a PS Vita/PS2/PS3 —
+casi seguro ya tiene la lógica de opcodes de v15 resuelta. Osea que esto es
+más "portar lógica ya existente de Butterscotch a Cinnamon" que "reversear
+un formato desconocido de cero" — real trabajo de desarrollo, pero acotado y
+con una implementación de referencia a mano.
+
+El archivo bueno para cuando esto se destrabe:
+`extracted/gog_linux/data/noarch/game/assets/game.unx`.
+
 ## Estado de este repo
 
 - `cinnamon/` — clone de Cinnamon, rama **`UNDERTALE-3DS`** (no `main`): `main`
