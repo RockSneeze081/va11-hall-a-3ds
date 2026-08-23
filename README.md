@@ -42,6 +42,36 @@ Si resulta que la build de Vita es YYC, la Vita queda descartada como fuente de
 assets ejecutables (igual serviría como fuente de sprites/audio/texto, pero no
 del código del juego) y haría falta la build de PC/Mac/Linux en su lugar.
 
+## Actualización: la Vita quedó descartada como fuente (por ahora)
+
+Se probó con el `.pkg` real del usuario (300MB, PCSB01166 EUR). Resultó ser un
+pkg ya parcheado — `pkg2zip` lo extrajo sin necesitar zRIF. Adentro apareció
+`games/game.win` (21MB, el tamaño esperado), pero **no empieza con la firma
+`FORM`**: el histograma de bytes es plano (alta entropía) y se probaron
+sistemáticamente períodos de XOR de clave repetida de 1 a 256 bytes contra el
+plaintext conocido (`FORM`+largo+`GEN8`) sin que ninguno diera un largo de
+chunk GEN8 plausible. Es cifrado real, no una ofuscación trivial — no vale la
+pena seguir adivinando a ciegas.
+
+Investigando la escena de "GameMaker en Vita/3DS" (el proyecto
+[yoyoloader_vita](https://github.com/Rinnegatamante/yoyoloader_vita) de
+Rinnegatamante y su [guía oficial de asset-swap](https://gist.github.com/CatoTheYounger97/fa47e7eef92f772e4004d4dac22f9bdb))
+se confirma que esto no es mala suerte nuestra: **todo el flujo de trabajo
+establecido en esa comunidad parte del `data.win` de PC/Steam, nunca de
+exports nativos de consola** (Vita/PS4/Switch) — su propia guía marca
+"PC/Console Bytecode" como algo que necesita este workaround específico, y no
+hay ningún decryptor documentado para exports nativos de consola en ningún
+lado. Es la señal de que perseguir el cifrado de la Vita no tiene sentido
+cuando el camino real y probado es la copia de PC.
+
+**Por eso ahora hace falta la versión de PC** (Steam/GOG/itch, cualquiera) —
+sortea el cifrado por completo y de paso resuelve la duda de YYC-vs-VM (los
+builds de escritorio de GMS 1.4 son casi siempre VM). El `pkg2zip` compilado
+(con un fix al Makefile para arm64 — el original asume x86 y pasa `-maes
+-mssse3`, que clang rechaza en Apple Silicon; el fallback en C portable ya
+existe en el propio código así que alcanzaba con no compilar los archivos
+`*_x86.c` ahí) queda disponible en `pkg2zip/` por si hace falta de nuevo.
+
 ## Estado de este repo
 
 - `cinnamon/` — clone de Cinnamon, rama **`UNDERTALE-3DS`** (no `main`): `main`

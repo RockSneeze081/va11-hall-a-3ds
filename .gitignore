@@ -1,4 +1,5 @@
 cinnamon/
+pkg2zip/
 extracted/*
 !extracted/.gitkeep
 build/
