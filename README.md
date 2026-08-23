@@ -108,6 +108,48 @@ con una implementación de referencia a mano.
 El archivo bueno para cuando esto se destrabe:
 `extracted/gog_linux/data/noarch/game/assets/game.unx`.
 
+## Actualización: hay un .3dsx real, pero crashea al arrancar en el emulador
+
+En la práctica, el problema de bytecode v15 de arriba resultó ser menos grave
+de lo que parecía: `vm.c` solo distingue "v17 o más" de "todo lo anterior"
+(`IS_BC16_OR_BELOW` vs `IS_BC17_OR_HIGHER`), nada separa v15 de v16
+específicamente. Con devkitPro instalado (`/opt/devkitpro`, vía el `.pkg`
+oficial + `sudo dkp-pacman -S 3ds-dev`, más `brew install cmake` porque
+devkitPro no trae un `cmake` genérico) se pudo:
+
+1. Renombrar `game.unx` a `data.win` (el preprocesador busca ese nombre
+   literal por el string, cosmético, mismo contenido).
+2. Correr `n3ds-preprocess` sobre el archivo real → **88 sonidos empaquetados
+   bien** (872MB) una vez que se sacaron unos `.ogg` de la Vita que resultaron
+   ser *también* falsos (no arrancan con la firma `OggS`, probablemente
+   Sony los pasa a ATRAC9) — estaban tapando el audio embebido real que sí
+   funciona. Quedan 32 pistas de música que este `.zip` de GOG en particular
+   no trae sueltas (huecos reales, pero no bloquean nada, solo quedan mudas).
+3. Compilar Cinnamon para `n3ds` de verdad (con
+   `-DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake"`, no con el wrapper
+   `arm-none-eabi-cmake` que apunta al toolchain equivocado) →
+   **`cinnamon/build/n3ds/cinnamon.3dsx`, 2.1GB, compila limpio.**
+
+Probado en [Azahar](https://github.com/azahar-emu/azahar) (el fork
+mantenido de Citra): carga de verdad (no lo rechaza, se ve en
+`~/Library/Application Support/Azahar/log/azahar_log.txt` que arranca
+Vulkan, carga shaders, arranca audio, hace llamadas de servicio HLE), pero
+**se cierra solo, siempre en el mismo punto exacto**: justo después de dos
+avisos `unknown/unimplemented function 'ConfigureNew3DSCPU'`. Sin reporte de
+crash de macOS → es una salida controlada, no un segfault. Probar sin "New
+3DS mode" en la config de Azahar no cambió nada (mismo log, mismo cierre),
+así que esa función puntual probablemente no es la causa real, solo está
+cerca.
+
+**Para retomar:** probar renderer OpenGL en vez de Vulkan en Azahar (el log
+está lleno de warnings de MoltenVK tipo "blacklisted"/"unsupported" — muy
+sospechoso), compilar Cinnamon en modo Debug para un error real en vez de un
+exit silencioso, o directamente probarlo en una 3DS real si hay una modeada
+a mano (Azahar/Citra tienen sus propias rarezas de compatibilidad aparte de
+si el port en sí está bien). El `.3dsx` en sí es el entregable correcto y
+completo del pipeline — Cinnamon no genera `.cia`, así que esto ya es
+"lo que se puede correr en 3DS" tal como lo distribuye el propio proyecto.
+
 ## Estado de este repo
 
 - `cinnamon/` — clone de Cinnamon, rama **`UNDERTALE-3DS`** (no `main`): `main`
