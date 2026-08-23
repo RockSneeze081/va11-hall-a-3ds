@@ -1,0 +1,9 @@
+cinnamon/
+extracted/*
+!extracted/.gitkeep
+build/
+*.vpk
+*.pkg
+data.win
+game.unx
+game.ios
