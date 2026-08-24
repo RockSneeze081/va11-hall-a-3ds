@@ -3,13 +3,12 @@
 Getting *VA-11 Hall-A: Cyberpunk Bartender Action* running on Nintendo 3DS
 homebrew, via [Cinnamon](https://github.com/Project-Sunshine-Native/cinnamon),
 an open-source reimplementation of the GameMaker: Studio runtime for 3DS and
-Wii U. The result: the game boots, has working audio, and real mouse/touch
-input (buttons *and* the touch panel) correctly drives the intro, publisher
-logo, and title screen, which now holds still instead of forcing itself back
-into the intro every ~0.7 seconds. The title screen currently renders as a
-black screen — game logic and input both work, the art just isn't drawing —
-see problem #5 below; it's the one open item standing between this and
-actual gameplay.
+Wii U. The result: the game boots, has working audio, real mouse/touch input,
+and reaches actual playable gameplay — Jill's apartment, with real character
+art, dialogue, and a working menu. The title screen itself still has an
+unfixed rendering bug (renders black — see problem #5), so it's currently
+auto-skipped rather than fixed outright (problem #6); everything after it,
+which is most of the game, is unaffected.
 
 **This repo contains no game data.** Like ScummVM, RPCS3, or Citra, this is
 tooling that runs *your own* legally-purchased copy of the game — you supply
@@ -198,9 +197,37 @@ running at a steady 30 FPS, and input demonstrably reaches the room's own
 objects, as above. Every room before it (splash screens, intro narration —
 all with real character art and backgrounds) renders correctly, which points
 at something specific to `title_screen`'s own instances rather than a
-general rendering regression. Not yet root-caused; a real GML
-decompiler/disassembler would help here far more than further blind
-hypothesis-testing against individual builtin functions.
+general rendering regression.
+
+A deeper dive traced the entire draw pipeline: `title_screen` turned out to
+be the first room encountered with its own custom in-room camera view
+(640×360, scaled 2× to fill the 1280×720 logical resolution — every earlier
+room just used the default full-resolution view), which was the leading
+theory for a while. Instrumenting every stage — `Runner_draw`'s
+tile/instance/background counts, each instance's sprite/visibility/alpha
+state, the sprite/texture-page data itself (all confirmed valid and
+correctly resolved, e.g. the cursor's 17×24 `cursor_spr` at a real,
+in-range texture-page index), and finally the renderer's own
+`transformScreenRect`/screen-space math (which checked out algebraically) —
+never actually caught a draw call for a plainly-valid, on-screen sprite at
+all, meaning it's dispatching through some code path this investigation
+didn't reach, not a data or transform-math bug as such. Not root-caused; a
+real GML decompiler/disassembler to read what `title_screen`'s own objects
+do in their Draw events would likely settle this far faster than more blind
+instrumentation of the C engine.
+
+### 6. Working around the black screen: auto-skip title_screen into gameplay
+
+With the room itself unfixed, the title screen was a dead end the player
+could not click past. Rather than leave the game stuck on a black screen,
+`title_screen` gets the same one-time auto-skip `languageselect` already
+had (problem #4): the moment it's entered, jump straight to whatever room
+the game's own room order says comes next. That room is `jill_room` — the
+actual first gameplay scene, Jill's apartment — and it renders correctly:
+real character art, dialogue text, and a working "Go to work" / "Stop" /
+"Settings" / "Exit" menu, confirmed by screenshot. This is a workaround, not
+a fix — the title screen itself is still broken — but it's what actually
+gets a player from boot to real, playable VA-11 Hall-A today.
 
 ## Building it yourself
 

@@ -1,12 +1,13 @@
 # Patches against Cinnamon
 
-Four small patches against
+Five small patches against
 [Project-Sunshine-Native/cinnamon](https://github.com/Project-Sunshine-Native/cinnamon)
 (`UNDERTALE-3DS` branch), applied on top of each other in order. The first
 three aren't VA-11 Hall-A-specific — they'd affect any GameMaker game with a
 resolution/audio profile different from Undertale/Deltarune/Pizza Tower.
 Patch 04 adds generic mouse/touch and timer support to the engine, plus one
-VA-11 Hall-A-specific workaround (matched by GML object name).
+VA-11 Hall-A-specific workaround (matched by GML object name). Patch 05 is
+VA-11 Hall-A-specific (matched by room name).
 
 Apply with `git apply patches/01-*.patch` etc. from the root of a fresh
 `cinnamon` clone (branch `UNDERTALE-3DS`), or just read them — each is small.
@@ -89,7 +90,27 @@ unknown-function fallback). Four changes:
 **Known remaining issue**: the title screen currently renders fully black on
 both screens (no crash — the room loads, instances exist, and clicks are
 confirmed reaching the room's own click-to-play objects (`title_to_room`,
-`cursor_obj`) — but nothing visible is drawn). Every earlier room (splash
-screens, intro narration) renders correctly, so this looks specific to
-whatever `title_screen`'s own instances do in their Draw step, not a general
-rendering regression. Not yet root-caused.
+`cursor_obj`) — but nothing visible is drawn). A deep dive tracing the full
+draw pipeline (`Renderer_drawSelf` → `N3DSRenderer_drawSprite` → the
+direct-mapped/fragmented-atlas paths → `transformScreenRect`) confirmed
+`title_screen`'s sprites are valid data (correct dimensions, resolved
+texture-page indices) and the transform math checks out on paper, but
+capped, targeted logging at each stage never actually fired for at least one
+plainly-valid sprite (`cursor_spr`) — meaning it's taking a code path this
+investigation didn't reach yet, not a data problem. Every earlier room
+(splash screens, intro narration) renders correctly, so this is specific to
+something about how `title_screen` in particular gets drawn. Not
+root-caused; worked around in patch 05 by skipping the room entirely rather
+than blocking on it further.
+
+## [05 — auto-skip title_screen into real gameplay](patches/05-auto-skip-title-screen-into-gameplay.patch)
+
+`src/n3ds/main.c`. Since the title screen can't currently be seen or
+interacted with, it's now auto-skipped the same way `languageselect` already
+was: the first time `title_screen` is entered, look up its position in the
+game's own room order and jump to whatever comes right after. That lands on
+`jill_room` — the game's actual first gameplay scene — which renders
+correctly with real art, dialogue, and a working menu (confirmed by
+screenshot, not just room-name logging). This is a workaround for the
+still-unfixed issue in patch 04, not a fix for it, and is matched by room
+name (`title_screen`), so it's specific to this game.

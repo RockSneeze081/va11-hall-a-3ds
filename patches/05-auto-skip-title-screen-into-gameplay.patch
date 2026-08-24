@@ -1,0 +1,42 @@
+diff --git a/src/n3ds/main.c b/src/n3ds/main.c
+index fc2ba2c..6d1c89c 100644
+--- a/src/n3ds/main.c
++++ b/src/n3ds/main.c
+@@ -818,6 +818,7 @@ int main(int argc, char** argv) {
+     bool spaceHeld = false, enterHeld = false;
+     Room* n3dsDebugLastRoom = runner->currentRoom;
+     bool n3dsSkippedLanguageSelect = false;
++    bool n3dsSkippedTitleScreen = false;
+ 
+     Gen8* gen8 = &dataWin->gen8;
+     int32_t gameW = (int32_t) gen8->defaultWindowWidth;
+@@ -861,6 +862,29 @@ int main(int argc, char** argv) {
+             }
+         }
+ 
++        // title_screen renders as a black screen on this port (unresolved rendering bug - real
++        // touch input demonstrably reaches its click-to-play objects, but nothing is visible to
++        // click on). Rather than leave the game stuck on a black screen, auto-advance straight
++        // into real gameplay the same way the languageselect skip above does: jump to whatever
++        // room the game's own room order says comes after title_screen. Every room upstream of
++        // here (splash screens, intro narration) renders correctly, so this should land on the
++        // genuine first gameplay scene with working art.
++        if (!n3dsSkippedTitleScreen && runner->currentRoom != NULL && runner->currentRoom->name != NULL &&
++            strcmp(runner->currentRoom->name, "title_screen") == 0) {
++            n3dsSkippedTitleScreen = true;
++            int32_t targetRoom = -1;
++            for (uint32_t i = 0; i + 1 < dataWin->gen8.roomOrderCount; i++) {
++                if (dataWin->gen8.roomOrder[i] == runner->currentRoomIndex) {
++                    targetRoom = dataWin->gen8.roomOrder[i + 1];
++                    break;
++                }
++            }
++            N3DS_debugLog("auto-skip title_screen -> target room index %ld\n", (long) targetRoom);
++            if (targetRoom >= 0) {
++                runner->pendingRoom = targetRoom;
++            }
++        }
++
+         // The 3DS touch panel is the only pointing device this hardware has, so it stands in for
+         // the mouse the original PC game expects: mouse_x/mouse_y/mouse_check_button* (added in
+         // vm_builtins.c) read the fields updated here every frame. wasMouseDown is captured
