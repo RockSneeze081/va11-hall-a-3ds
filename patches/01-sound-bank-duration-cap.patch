@@ -1,0 +1,29 @@
+diff --git a/tools/n3ds-preprocess/main.c b/tools/n3ds-preprocess/main.c
+index 8e62c5f..87e6292 100644
+--- a/tools/n3ds-preprocess/main.c
++++ b/tools/n3ds-preprocess/main.c
+@@ -68,6 +68,7 @@
+ #define N3DS_SOUND_BANK_ENTRY_CHANNEL_MASK 0x000000FFu
+ #define N3DS_SOUND_BANK_ENTRY_FLAG_LOOP 0x00000100u
+ #define N3DS_SOUND_BANK_ENTRY_FLAG_PCM16 0x00000200u
++#define N3DS_SOUND_BANK_MAX_DURATION_SECONDS 20.0
+ #define N3DS_SMALL_TEXTURE_SIZE 256u
+ #define N3DS_LARGE_TEXTURE_SIZE 512u
+ #define GMS2_TILE_INDEX_MASK  0x0007FFFFu
+@@ -4827,6 +4828,16 @@ static bool buildPackedSoundBank(Options* options, DataWin* dataWin) {
+             continue;
+         }
+ 
++        // The packed bank is read into memory in full at boot; a real 3DS has ~124-178MB of
++        // application memory total, so anything this long is background music/ambience that
++        // got misclassified as SFX by soundLooksLikeMusic(), not a true short sound effect.
++        double durationSeconds = pcm.sampleRate != 0 ? (double) pcm.sampleCount / pcm.sampleRate : 0.0;
++        if (durationSeconds > N3DS_SOUND_BANK_MAX_DURATION_SECONDS) {
++            fprintf(stderr, "Skipping sound bank entry %zu (%s): %.1fs exceeds %.0fs resident-bank limit, likely misclassified music\n", soundIndex, sound->name != NULL ? sound->name : "<unnamed>", durationSeconds, N3DS_SOUND_BANK_MAX_DURATION_SECONDS);
++            freeWavPcm16(&pcm);
++            continue;
++        }
++
+         uint32_t sampleRate = pcm.sampleRate != 0 ? pcm.sampleRate : N3DS_AUDIO_SAMPLE_RATE;
+         uint32_t sampleCount = pcm.sampleCount;
+         uint32_t channelCount = pcm.channelCount;

@@ -1,0 +1,17 @@
+diff --git a/src/vm_builtins.c b/src/vm_builtins.c
+index 9f2b5b8..c143091 100644
+--- a/src/vm_builtins.c
++++ b/src/vm_builtins.c
+@@ -436,7 +436,11 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char*
+ 
+         // OS constants
+         case BUILTIN_VAR_OS_TYPE:
+-            return RValue_makeReal(runner->osType);
++            // Report PS Vita to the game's own GML code (so it picks its gamepad/button
++            // control scheme instead of assuming mouse input) while runner->osType itself
++            // stays OS_3DS everywhere else, since Cinnamon's own rendering/GUI internals
++            // gate on that value for real 3DS dual-screen behavior.
++            return RValue_makeReal(OS_PSVITA);
+         case BUILTIN_VAR_OS_UNKNOWN:
+             return RValue_makeReal(OS_UNKNOWN);
+         case BUILTIN_VAR_OS_WIN32:

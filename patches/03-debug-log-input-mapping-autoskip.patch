@@ -1,0 +1,104 @@
+diff --git a/src/n3ds/main.c b/src/n3ds/main.c
+index 2fb74a7..82d1700 100644
+--- a/src/n3ds/main.c
++++ b/src/n3ds/main.c
+@@ -13,6 +13,7 @@
+ 
+ #include <ctype.h>
+ #include <math.h>
++#include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -53,6 +54,18 @@ static bool fileExists(const char* path) {
+     return stat(path, &st) == 0;
+ }
+ 
++// fprintf(stderr, ...) has nowhere to go once citro2d owns the screen (no consoleInit() console
++// active), so this writes straight to the SD card where it can actually be read back afterwards.
++static void N3DS_debugLog(const char* fmt, ...) {
++    FILE* f = fopen("sdmc:/3ds/cinnamon/debug.txt", "a");
++    if (f == NULL) return;
++    va_list args;
++    va_start(args, fmt);
++    vfprintf(f, fmt, args);
++    va_end(args);
++    fclose(f);
++}
++
+ static void N3DS_formatDebugSize(char* out, size_t outSize, uint32_t bytes) {
+     if (out == NULL || outSize == 0) return;
+ 
+@@ -779,6 +792,8 @@ int main(int argc, char** argv) {
+ 
+     runner->osType = OS_3DS;
+     Runner_initFirstRoom(runner);
++    N3DS_debugLog("initial room = %s\n",
++        (runner->currentRoom != NULL && runner->currentRoom->name != NULL) ? runner->currentRoom->name : "(null)");
+ 
+     bool haveRoomBorder = false;
+     C2D_Sprite roomBorder;
+@@ -791,6 +806,12 @@ int main(int argc, char** argv) {
+     bool leftHeld = false, rightHeld = false, upHeld = false, downHeld = false;
+     bool aHeld = false, bHeld = false, yHeld = false;
+     bool lHeld = false, rHeld = false;
++    // VA-11 Hall-A is a mouse-driven VN with no touch input wired up on this port (see
++    // N3DS_debugLog trail); Space/Enter are the common PC-VN dialogue-advance keys, tried here
++    // in addition to the Undertale-era Z/X/C mapping below since that alone didn't move it.
++    bool spaceHeld = false, enterHeld = false;
++    Room* n3dsDebugLastRoom = runner->currentRoom;
++    bool n3dsSkippedLanguageSelect = false;
+ 
+     Gen8* gen8 = &dataWin->gen8;
+     int32_t gameW = (int32_t) gen8->defaultWindowWidth;
+@@ -803,6 +824,41 @@ int main(int argc, char** argv) {
+         hidScanInput();
+         u32 held = hidKeysHeld();
+         u32 down = hidKeysDown();
++        if (down != 0) {
++            N3DS_debugLog("down=0x%08lx held=0x%08lx room=%s\n", (unsigned long) down, (unsigned long) held,
++                (runner->currentRoom != NULL && runner->currentRoom->name != NULL) ? runner->currentRoom->name : "(null)");
++        }
++        if (runner->currentRoom != n3dsDebugLastRoom) {
++            n3dsDebugLastRoom = runner->currentRoom;
++            N3DS_debugLog("room changed to %s\n",
++                (runner->currentRoom != NULL && runner->currentRoom->name != NULL) ? runner->currentRoom->name : "(null)");
++        }
++
++        // No touch/mouse support exists yet in this port (see N3DS_debugLog trail from tonight's
++        // testing) and this specific room doesn't respond to any of the simulated keyboard keys
++        // below, so auto-advance past it to whatever room the game's own room order says comes
++        // next, rather than getting stuck here permanently.
++        if (!n3dsSkippedLanguageSelect && runner->currentRoom != NULL && runner->currentRoom->name != NULL &&
++            strcmp(runner->currentRoom->name, "languageselect") == 0) {
++            n3dsSkippedLanguageSelect = true;
++            int32_t targetRoom = -1;
++            for (uint32_t i = 0; i + 1 < dataWin->gen8.roomOrderCount; i++) {
++                if (dataWin->gen8.roomOrder[i] == runner->currentRoomIndex) {
++                    targetRoom = dataWin->gen8.roomOrder[i + 1];
++                    break;
++                }
++            }
++            N3DS_debugLog("auto-skip languageselect -> target room index %ld\n", (long) targetRoom);
++            if (targetRoom >= 0) {
++                runner->pendingRoom = targetRoom;
++            }
++        }
++
++        if (down & KEY_TOUCH) {
++            touchPosition touch;
++            hidTouchRead(&touch);
++            N3DS_debugLog("touch down at px=%u py=%u\n", touch.px, touch.py);
++        }
+ 
+         if (down & KEY_START) break;
+         if (down & KEY_SELECT) debugMonitorVisible = !debugMonitorVisible;
+@@ -825,6 +881,8 @@ int main(int argc, char** argv) {
+         syncKey(runner->keyboard, &yHeld, 'C', (held & KEY_Y) || (held & KEY_X));
+         syncKey(runner->keyboard, &lHeld, VK_PAGEDOWN, (held & KEY_L) && !debugWarpToAsriel);
+         syncKey(runner->keyboard, &rHeld, VK_PAGEUP, (held & KEY_R));
++        syncKey(runner->keyboard, &spaceHeld, VK_SPACE, (held & KEY_A));
++        syncKey(runner->keyboard, &enterHeld, VK_ENTER, (held & KEY_B));
+ 
+         Runner_step(runner);
+         N3DS_tryTriggerAsrielLed(runner);

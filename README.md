@@ -1,308 +1,202 @@
-# VA-11 Hall-A → 3DS (via Cinnamon)
+# VA-11 Hall-A on 3DS
 
-Meta: correr VA-11 Hall-A: Cyberpunk Bartender Action en una 3DS homebrew, usando
-los assets del juego que el usuario ya compró (copia física/digital de PS Vita,
-backupeada). No se distribuye ni se sube a ningún lado el data file del juego ni
-ningún asset — todo el procesamiento es local, para uso personal, igual que un
-port de ScummVM/RPCS3/Citra que requiere que vos pongas tus propios archivos.
+Getting *VA-11 Hall-A: Cyberpunk Bartender Action* running on Nintendo 3DS
+homebrew, via [Cinnamon](https://github.com/Project-Sunshine-Native/cinnamon),
+an open-source reimplementation of the GameMaker: Studio runtime for 3DS and
+Wii U. The result: the game boots, has working audio, and buttons correctly
+drive the real intro, publisher logo, and title screen.
 
-## Qué es "Cinnamon"
+**This repo contains no game data.** Like ScummVM, RPCS3, or Citra, this is
+tooling that runs *your own* legally-purchased copy of the game — you supply
+the data file yourself. Nothing extracted from the game is committed here.
 
-No es un motor de novela visual. Es una **reimplementación open source (MPL-2.0)
-del runtime/runner de GameMaker: Studio, escrita en C, para 3DS y Wii U**
-(proyecto [Project-Sunshine-Native/cinnamon](https://github.com/Project-Sunshine-Native/cinnamon),
-fork de [Butterscotch](https://github.com/MrPowerGamerBR/Butterscotch)). GameMaker
-compila los juegos a bytecode portable (no a código nativo, salvo que se use YYC),
-así que cualquier runner compatible con esa versión de bytecode puede ejecutar el
-juego en otra plataforma — es la misma idea que Droidtale (Undertale en Android) o
-los ports de Undertale/Deltarune a Wii U/3DS que ya tiene el proyecto.
+## Why this is possible at all
 
-**VA-11 Hall-A está hecho en GameMaker: Studio** (confirmado por la propia
-[showcase page de GameMaker](https://gamemaker.io/en/showcase/va-11-hall-a-cyberpunk-bartender-action)
-y por discusiones de los devs de Sukeban Games — el prototipo/prólogo era Ren'Py,
-pero el juego final se reescribió en GameMaker). Eso es lo que hace viable, en
-principio, este proyecto.
+GameMaker: Studio compiles games to portable bytecode (unless the developer
+opts into YYC, which compiles to native machine code instead) — the same
+bytecode runs on any platform with a compatible runner. That's the whole
+premise behind [Droidtale](https://github.com/pcysl5edgo/Droidtale) (Undertale
+on Android) and behind Cinnamon itself, which already ports Undertale and
+Deltarune to 3DS/Wii U. VA-11 Hall-A happens to be built in GameMaker too — its
+prologue was Ren'Py, but the full release was rewritten in GameMaker, per
+[GameMaker's own showcase page](https://gamemaker.io/en/showcase/va-11-hall-a-cyberpunk-bartender-action)
+for it.
 
-## El riesgo real: bytecode VM vs. YYC
+The catch: Cinnamon was built entirely around Undertale, Deltarune, and Pizza
+Tower — three keyboard/gamepad-driven games with small, boxy resolutions close
+to the 3DS's own screens. VA-11 Hall-A is a 1280×720 mouse-driven visual
+novel. Getting it running meant finding and fixing several real gaps that
+those games never exercised.
 
-Cinnamon **solo soporta bytecode versión 16 y 17, generado por el runner VM
-normal de GameMaker**. Si el juego fue compilado con **YYC** (YoYo Compiler, que
-genera código nativo ARM/x86 en vez de bytecode) o con el nuevo formato **GMRT**,
-Cinnamon no puede ejecutarlo — no hay bytecode que interpretar.
+## What was actually wrong, and how each was found
 
-- La versión PC/Mac/Linux (2016) de VA-11 Hall-A casi seguro usa el runner VM
-  estándar (es lo normal para releases de escritorio).
-- El port de **PS Vita fue hecho por el estudio Wolfgame**. No hay información
-  pública sobre si usaron YYC (habitual en ports de consola por rendimiento/
-  certificación) o el runner VM. **Esto no se puede saber sin mirar el archivo
-  real** — por eso el primer paso técnico es sacar el data file de tu backup y
-  correr el scanner de este repo sobre él.
+Every fix below was reached by building a small tool or adding real
+diagnostics to get ground truth, rather than guessing — details in the repo's
+[commit history](../../commits/main) and in `cinnamon`'s own local commits.
 
-Si resulta que la build de Vita es YYC, la Vita queda descartada como fuente de
-assets ejecutables (igual serviría como fuente de sprites/audio/texto, pero no
-del código del juego) y haría falta la build de PC/Mac/Linux en su lugar.
+### 1. Sourcing clean, compatible game data
 
-## Actualización: la Vita quedó descartada como fuente (por ahora)
+The data file (`data.win` / `game.unx` / `game.win` depending on platform) had
+to actually be usable: not encrypted, not compiled with YYC (native code has
+no bytecode for a reimplemented runner to interpret), and on a bytecode
+version Cinnamon's VM understands.
 
-Se probó con el `.pkg` real del usuario (300MB, PCSB01166 EUR). Resultó ser un
-pkg ya parcheado — `pkg2zip` lo extrajo sin necesitar zRIF. Adentro apareció
-`games/game.win` (21MB, el tamaño esperado), pero **no empieza con la firma
-`FORM`**: el histograma de bytes es plano (alta entropía) y se probaron
-sistemáticamente períodos de XOR de clave repetida de 1 a 256 bytes contra el
-plaintext conocido (`FORM`+largo+`GEN8`) sin que ninguno diera un largo de
-chunk GEN8 plausible. Es cifrado real, no una ofuscación trivial — no vale la
-pena seguir adivinando a ciegas.
+- A PS Vita backup's `game.win` turned out to be genuinely encrypted (verified
+  by entropy analysis and a systematic known-plaintext XOR sweep across every
+  repeat-period from 1–256 bytes — none produced a plausible chunk length).
+  Research into the wider "GameMaker on Vita/3DS" homebrew scene confirmed
+  this wasn't bad luck: the community's own established workflow for this
+  ([Rinnegatamante's yoyoloader_vita](https://github.com/Rinnegatamante/yoyoloader_vita)
+  and its [asset-swap guide](https://gist.github.com/CatoTheYounger97/fa47e7eef92f772e4004d4dac22f9bdb))
+  universally sources from PC builds, never console-native exports.
+- A GOG offline Linux installer (a self-extracting `makeself`/`mojosetup`
+  script) turned out to contain a clean copy. It was extracted **without
+  running the installer** — the embedded `data.zip` was located by finding the
+  real end of the first gzip stream via `zlib.decompressobj`, not by trusting
+  the installer's own (incorrect) `--dumpconf` offset.
+- That file turned out to be **bytecode version 15** — one version older than
+  Cinnamon's documented "16/17 only" support. Reading `vm.c` directly showed
+  the VM's actual opcode dispatch only ever distinguishes "version 17 or
+  higher" from "everything else" — nothing in the real code path separates
+  v15 from v16. The stricter documented requirement never actually mattered.
 
-Investigando la escena de "GameMaker en Vita/3DS" (el proyecto
-[yoyoloader_vita](https://github.com/Rinnegatamante/yoyoloader_vita) de
-Rinnegatamante y su [guía oficial de asset-swap](https://gist.github.com/CatoTheYounger97/fa47e7eef92f772e4004d4dac22f9bdb))
-se confirma que esto no es mala suerte nuestra: **todo el flujo de trabajo
-establecido en esa comunidad parte del `data.win` de PC/Steam, nunca de
-exports nativos de consola** (Vita/PS4/Switch) — su propia guía marca
-"PC/Console Bytecode" como algo que necesita este workaround específico, y no
-hay ningún decryptor documentado para exports nativos de consola en ningún
-lado. Es la señal de que perseguir el cifrado de la Vita no tiene sentido
-cuando el camino real y probado es la copia de PC.
+`tools/scan_gm_data.py` — a small dependency-free script that finds a
+GameMaker data file by byte signature (not filename) and reports its bytecode
+version and YYC status — was built and verified against synthetic test data
+before being trusted on the real file.
 
-**Por eso ahora hace falta la versión de PC** (Steam/GOG/itch, cualquiera) —
-sortea el cifrado por completo y de paso resuelve la duda de YYC-vs-VM (los
-builds de escritorio de GMS 1.4 son casi siempre VM). El `pkg2zip` compilado
-(con un fix al Makefile para arm64 — el original asume x86 y pasa `-maes
--mssse3`, que clang rechaza en Apple Silicon; el fallback en C portable ya
-existe en el propio código así que alcanzaba con no compilar los archivos
-`*_x86.c` ahí) queda disponible en `pkg2zip/` por si hace falta de nuevo.
+### 2. Missing `data.win` in the packaged romfs
 
-## Actualización: datos limpios conseguidos, pero es bytecode v15
+`n3ds-preprocess` (Cinnamon's asset-conversion tool) only ever writes
+converted textures and audio — never the data file itself. But the runtime
+(`chooseDataWinPath()` in `src/n3ds/main.c`) still needs the *original*
+`data.win` bundled at `romfs:/data.win` to read game logic (code, objects,
+rooms, strings) at boot; the preprocessor only converts graphics and audio.
+Without it, `DataWin_parse()` hits a failed `fopen()` and calls `exit(1)`
+directly — a silent, clean process exit, no on-screen error, no crash report.
+**Fix:** copy the real data file into `resources/3ds/romfs/data.win` before
+building.
 
-Se consiguió `game.unx` (211MB) desde un instalador offline de GOG para Linux
-(`.sh` tipo makeself+mojosetup, extraído sin correr el instalador — es un
-script con un `data.zip` pegado al final; el offset real del zip se encontró
-buscando la firma `PK\x03\x04`, no confiando en el valor `OLDSKIP` que reporta
-`--dumpconf`, que no coincidía). El scanner lo confirma como el archivo real:
+### 3. An unbounded, always-resident sound bank
 
+With #2 fixed, the app crashed one step later loading audio. The packed sound
+bank was 872MB. Cinnamon's SFX/music classifier (`soundLooksLikeMusic()`,
+a filename-pattern heuristic) misclassified roughly 48 multi-minute
+background music tracks as short sound effects, so they were being decoded
+to raw PCM and loaded entirely into memory at boot — a real 3DS has roughly
+124–178MB of total application memory, so this was never going to fit,
+regardless of whether the file lived in the app bundle or on the SD card.
+
+**Fix:** added a duration cap (`N3DS_SOUND_BANK_MAX_DURATION_SECONDS`, 20s) to
+`tools/n3ds-preprocess/main.c`'s sound-bank packer — anything longer is
+skipped with a clear log message instead of silently exhausting memory.
+Result: 8.0MB for the ~40 real sound effects, instead of 872MB. (The excluded
+long tracks are currently just silent — a known, cosmetic gap, not a
+blocker.)
+
+### 4. No input reaches the game at all — except it does, just not everywhere
+
+With the first two fixed, the game booted and rendered correctly, but nothing
+responded to input. Rather than keep guessing blindly, real file-based debug
+logging was added directly to Cinnamon (`N3DS_debugLog()` — plain
+`fprintf(stderr, ...)` goes nowhere once the game owns the screen via
+citro2d, since there's no active `consoleInit()` console to receive it; this
+instead appends to a file on the SD card). That logging proved, with repeated
+confirmed entries, that **button presses do reach the engine correctly** —
+but the game's very first interactive screen, a language-select menu, never
+responded to any of them.
+
+Two more things came out of the same investigation:
+
+- Cinnamon has no touch-screen input at all (`hidTouchRead()` is never
+  called), and the GML builtins `mouse_x`/`mouse_y` don't exist in this VM —
+  unsurprising, since none of Cinnamon's prior target games use a mouse.
+  Building that properly would mean adding new interpreter builtins, not
+  wiring up something that already exists.
+- The one screen that didn't respond to buttons turned out to be the *only*
+  one that needed a mouse. Once auto-skipped past it (see below), every
+  other screen tested — the real intro narration, the publisher logo, and
+  the title screen, all with correct character art and background rendering
+  — responded correctly to button presses.
+
+**Fixes:**
+- Reused Cinnamon's own existing debug room-warp mechanism (already present
+  for an Undertale-specific developer shortcut) to add a generic one-time
+  auto-skip: the first time the current room is named exactly
+  `languageselect`, jump to whatever room comes next in the game's own
+  declared room order.
+- Added `VK_SPACE`/`VK_ENTER` to the existing 3DS-button-to-keyboard
+  simulation (previously only `Z`/`X`/`C`, tuned for Undertale) — Space and
+  Enter turned out to be VA-11 Hall-A's actual dialogue-advance keys, the
+  standard PC visual-novel convention.
+- Also changed what the game's own GML code sees when it asks `os_type`:
+  it now reports PS Vita specifically (a real platform Cinnamon already
+  defines), while every one of Cinnamon's own internal checks that gate real
+  3DS-specific rendering behavior still see `OS_3DS` as before — a
+  one-line, fully decoupled change. The reasoning: the Vita release of this
+  same game needs a gamepad-navigable control scheme since Vita has no
+  mouse, and that logic is very likely still present as a platform-gated
+  branch in the shared bytecode. Whether this specific change is what made
+  buttons work in the main game, versus the Space/Enter mapping alone being
+  sufficient, wasn't isolated — both were verified working together, not
+  independently.
+
+## Building it yourself
+
+You need your own legally-obtained copy of the game's data file (any
+platform's GameMaker export — Windows, Mac, Linux, etc.). This repo does not
+provide one.
+
+```bash
+# 1. Find and check your data file
+python3 tools/scan_gm_data.py /path/to/extracted/game/files
+# Looking for: "COMPATIBLE (probable)" with CODE present, not YYC
+
+# 2. Get Cinnamon (the UNDERTALE-3DS branch has the asset-conversion tool
+#    that `main` is missing) and a devkitPro 3DS environment
+git clone --branch UNDERTALE-3DS https://github.com/Project-Sunshine-Native/cinnamon.git
+# devkitPro: https://devkitpro.org/wiki/Getting_Started
+
+# 3. Copy your data file in as both the preprocessor input and the runtime copy
+cp /path/to/data.win cinnamon/resources/3ds/romfs/data.win
+
+# 4. Build and run the preprocessor (needs tex3ds from devkitPro)
+cmake -S cinnamon/tools/n3ds-preprocess -B build/n3ds-preprocess -DCMAKE_BUILD_TYPE=Release
+cmake --build build/n3ds-preprocess
+build/n3ds-preprocess/n3ds-preprocess /path/to/data.win cinnamon/resources/3ds/romfs
+
+# 5. Build Cinnamon itself
+cmake -S cinnamon -B build/n3ds -DPLATFORM=n3ds \
+  -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake" -DCMAKE_BUILD_TYPE=Release
+cmake --build build/n3ds
+# -> build/n3ds/cinnamon.3dsx
 ```
-Nombre mostrado: 'VA-11 Hall-A: Cyberpunk Bartender Action'
-Bytecode version: 15
-Veredicto: Bytecode v15 no soportado por Cinnamon (solo soporta v16 y v17).
-```
 
-Buena noticia: **no está cifrado y no es YYC** (chunk `CODE` presente, 1.2MB)
-— el miedo original quedó resuelto del todo. La mala: es una versión de
-bytecode más vieja que las que Cinnamon soporta. Y esto **no se arregla
-consiguiendo otra plataforma** — la versión de bytecode depende de qué
-build de GameMaker Studio usó Sukeban Games en 2016, no de para qué
-plataforma se exportó, así que Windows/Mac/Android de este mismo juego
-casi seguro también son v15.
+Run it on real hardware via the Homebrew Launcher, or in an emulator like
+[Azahar](https://github.com/azahar-emu/azahar) — use its **Load File**
+option specifically; launching the `.3dsx` as a bare command-line argument
+opens the library but does not boot it.
 
-Revisando `cinnamon/src/bytecode_versions.h`: no es un límite blando/no
-probado, es arquitectónico — el dispatch de opcodes de la VM en `vm.c` está
-construido enteramente sobre flags de compilación `ENABLE_BC16`/`ENABLE_BC17`,
-sin ningún punto de anclaje para v15. Pero el proyecto padre de Cinnamon,
-[Butterscotch](https://github.com/MrPowerGamerBR/Butterscotch) (AGPL-3.0,
-activo, ~1700 commits), soporta bytecode 8–17 y ya apunta a PS Vita/PS2/PS3 —
-casi seguro ya tiene la lógica de opcodes de v15 resuelta. Osea que esto es
-más "portar lógica ya existente de Butterscotch a Cinnamon" que "reversear
-un formato desconocido de cero" — real trabajo de desarrollo, pero acotado y
-con una implementación de referencia a mano.
+## Repo layout
 
-El archivo bueno para cuando esto se destrabe:
-`extracted/gog_linux/data/noarch/game/assets/game.unx`.
+- `tools/scan_gm_data.py` — standalone GameMaker data-file scanner/validator
+  (finds the file by byte signature, reports bytecode version and YYC
+  status). No dependencies beyond the Python standard library.
+- `cinnamon/`, `pkg2zip/` — not included in this repo (see `.gitignore`);
+  clone them fresh per the build steps above. All patches described here are
+  small, self-contained diffs against upstream, listed in
+  [`PATCHES.md`](PATCHES.md).
+- `extracted/`, `dist/*.3dsx` — also gitignored. Both would contain the
+  actual game's copyrighted assets, which don't belong in a public repo.
 
-## Actualización: hay un .3dsx real, pero crashea al arrancar en el emulador
+## Credits
 
-En la práctica, el problema de bytecode v15 de arriba resultó ser menos grave
-de lo que parecía: `vm.c` solo distingue "v17 o más" de "todo lo anterior"
-(`IS_BC16_OR_BELOW` vs `IS_BC17_OR_HIGHER`), nada separa v15 de v16
-específicamente. Con devkitPro instalado (`/opt/devkitpro`, vía el `.pkg`
-oficial + `sudo dkp-pacman -S 3ds-dev`, más `brew install cmake` porque
-devkitPro no trae un `cmake` genérico) se pudo:
-
-1. Renombrar `game.unx` a `data.win` (el preprocesador busca ese nombre
-   literal por el string, cosmético, mismo contenido).
-2. Correr `n3ds-preprocess` sobre el archivo real → **88 sonidos empaquetados
-   bien** (872MB) una vez que se sacaron unos `.ogg` de la Vita que resultaron
-   ser *también* falsos (no arrancan con la firma `OggS`, probablemente
-   Sony los pasa a ATRAC9) — estaban tapando el audio embebido real que sí
-   funciona. Quedan 32 pistas de música que este `.zip` de GOG en particular
-   no trae sueltas (huecos reales, pero no bloquean nada, solo quedan mudas).
-3. Compilar Cinnamon para `n3ds` de verdad (con
-   `-DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/3DS.cmake"`, no con el wrapper
-   `arm-none-eabi-cmake` que apunta al toolchain equivocado) →
-   **`cinnamon/build/n3ds/cinnamon.3dsx`, 2.1GB, compila limpio.**
-
-Probado en [Azahar](https://github.com/azahar-emu/azahar) (el fork
-mantenido de Citra): carga de verdad (no lo rechaza, se ve en
-`~/Library/Application Support/Azahar/log/azahar_log.txt` que arranca
-Vulkan, carga shaders, arranca audio, hace llamadas de servicio HLE), pero
-**se cierra solo, siempre en el mismo punto exacto**: justo después de dos
-avisos `unknown/unimplemented function 'ConfigureNew3DSCPU'`. Sin reporte de
-crash de macOS → es una salida controlada, no un segfault. Probar sin "New
-3DS mode" en la config de Azahar no cambió nada (mismo log, mismo cierre),
-así que esa función puntual probablemente no es la causa real, solo está
-cerca.
-
-**Para retomar:** probar renderer OpenGL en vez de Vulkan en Azahar (el log
-está lleno de warnings de MoltenVK tipo "blacklisted"/"unsupported" — muy
-sospechoso), compilar Cinnamon en modo Debug para un error real en vez de un
-exit silencioso, o directamente probarlo en una 3DS real si hay una modeada
-a mano (Azahar/Citra tienen sus propias rarezas de compatibilidad aparte de
-si el port en sí está bien). El `.3dsx` en sí es el entregable correcto y
-completo del pipeline — Cinnamon no genera `.cia`, así que esto ya es
-"lo que se puede correr en 3DS" tal como lo distribuye el propio proyecto.
-
-## Resuelto: el juego corre completo — eran dos bugs concretos, no bytecode v15
-
-El cierre reproducible no tenía nada que ver con `ConfigureNew3DSCPU` (era
-ruido normal de arranque, presente en cualquier boot) ni con la versión de
-bytecode (nunca fue el problema real). Eran dos bugs identificados y
-arreglados:
-
-**Bug 1 — falta el `data.win` en el romfs de verdad.** `n3ds-preprocess`
-solo escribe `gfx/` y `audio/`; el motor en tiempo de ejecución
-(`chooseDataWinPath()` en `src/n3ds/main.c`) además necesita el
-`data.win` original completo en `romfs:/data.win` (para leer CODE, OBJT,
-ROOM, STRG — el preprocesador no convierte eso, solo gráficos y audio). Si
-no está, `DataWin_parse` en `src/data_win.c` llama a `exit(1)` directo al
-fallar el `fopen` — de ahí el cierre limpio y silencioso, sin pantalla de
-error ni crash de macOS. Arreglo: copiar el `data.win` real a
-`resources/3ds/romfs/data.win` antes de compilar.
-
-**Bug 2 — el banco de sonido no tenía límite de tamaño.** Con eso resuelto,
-crasheaba en el paso siguiente ("Loading sound bank"). El banco pesaba
-**872MB** porque `soundLooksLikeMusic()` (el heurístico de nombre que decide
-qué audio va empaquetado-en-memoria vs. streameado) clasificó mal ~48 pistas
-de música de fondo de 200-250 segundos como "efecto de sonido" — y esas se
-cargan enteras en RAM al arrancar. Una 3DS real tiene ~124-178MB de memoria
-de aplicación en total; 872MB nunca iba a entrar, cargarlo o no en romfs vs
-SD no cambiaba nada. Arreglo real en `tools/n3ds-preprocess/main.c`
-(`buildPackedSoundBank`): agregado `N3DS_SOUND_BANK_MAX_DURATION_SECONDS`
-(20s) — cualquier "efecto" más largo que eso se descarta del banco en vez de
-empaquetarse, con un mensaje explicando por qué. Resultado: 40 efectos
-reales, **8.0MB** en vez de 872MB.
-
-Con ambos arreglos: build final en
-[`dist/VA-11_Hall-A.3dsx`](../va11-3ds/dist/VA-11_Hall-A.3dsx) (1.46GB, la
-mayor parte texturas), probado en Azahar — llega a la pantalla de selección
-de idioma real del juego, 30 FPS, 100% de velocidad, sin cuelgues. Las ~48
-pistas de música descartadas por el filtro quedan mudas (huecos conocidos,
-no bloquean nada); serían candidatas a un streaming real más adelante si
-hace falta.
-
-Ambos bugs son genéricos (afectarían a cualquier port de un juego con
-diálogo/OST largo, no solo VA-11 Hall-A) — vale la pena reportarlos o mandar
-un PR a [Project-Sunshine-Native/cinnamon](https://github.com/Project-Sunshine-Native/cinnamon)
-si eso te interesa; no lo hice sin preguntar porque es publicar en un repo
-ajeno.
-
-## Estado de este repo
-
-- `cinnamon/` — clone de Cinnamon, rama **`UNDERTALE-3DS`** (no `main`): `main`
-  es el motor pelado sin la herramienta de preprocesado; `UNDERTALE-3DS` es la
-  rama de un port real y completo ("UNDERTALE: 3DS Edition") que sí incluye
-  `tools/n3ds-preprocess`, la herramienta que convierte un `data.win` a los
-  formatos que Cinnamon usa en 3DS (texturas ETC1A4/RGBA5551 vía `tex3ds`, audio
-  a BCWAV). Es la base más probada para partir a armar un nuevo port.
-- `tools/scan_gm_data.py` — script propio (sin dependencias, solo stdlib) que
-  busca archivos con firma `FORM` (el contenedor de GameMaker), lista sus chunks,
-  y da un veredicto de compatibilidad con Cinnamon. La lectura de bytes (offset
-  del `bytecodeVersion` dentro de `GEN8`, detección de YYC por chunk `CODE`
-  vacío, offsets de `name`/`displayName`) está tomada directamente de
-  `cinnamon/src/data_win.c`, no de documentación de terceros — y quedó probada
-  contra archivos sintéticos que reproducen esa estructura byte a byte
-  (caso compatible, caso YYC, y caso de firma embebida dentro de un binario más
-  grande tipo `eboot.bin`).
-- No se instaló todavía devkitPro (hace falta para compilar Cinnamon para 3DS y
-  para `tex3ds`). No hace falta hasta que confirmemos que el data file es
-  compatible.
-- Todavía no tenemos el data file de VA-11 Hall-A en ningún formato — el
-  siguiente paso depende de vos.
-
-## Plan / pipeline completo
-
-1. **Sacar el data file de tu backup de Vita.**
-   - Si tu backup es un `.pkg` + `zRIF`/`work.bin` (formato típico de backup
-     legítimo): convertilo a `.vpk` con [`pkg2zip`](https://github.com/mmozeiko/pkg2zip)
-     (open source, es el estándar de la escena Vita para esto).
-   - Un `.vpk` es un `.zip` normal — descomprimilo con lo que quieras
-     (`unzip juego.vpk -d extracted/`).
-   - Puede que el data file no se llame `data.win` (en exports no-Windows de
-     GameMaker suele ser `game.unx`, `game.ios`, o directamente estar embebido
-     dentro de `eboot.bin`) — por eso el scanner busca la firma de bytes, no el
-     nombre del archivo.
-2. **Correr el scanner** sobre la carpeta descomprimida:
-   ```bash
-   python3 tools/scan_gm_data.py extracted/
-   ```
-   Si no encuentra nada como archivo independiente, probar el modo profundo
-   (busca la firma `FORM` embebida dentro de binarios grandes como `eboot.bin`):
-   ```bash
-   python3 tools/scan_gm_data.py extracted/ --deep
-   ```
-3. **Leer el veredicto.** Si dice `COMPATIBLE (probable): bytecode v16` o `v17`
-   con `CODE presente` → seguimos. Si dice `YYC / código nativo detectado` →
-   la build de Vita no sirve como fuente de bytecode, hay que conseguir la
-   build de PC/Mac/Linux.
-4. **Instalar devkitPro (entorno 3DS)** y compilar `tools/n3ds-preprocess`
-   dentro de `cinnamon/` (instrucciones en `cinnamon/README.md`).
-5. **Convertir los assets:**
-   ```bash
-   n3ds-preprocess <data-file-encontrado> resources/3ds/romfs
-   ```
-6. **Compilar Cinnamon para 3DS:**
-   ```bash
-   arm-none-eabi-cmake -S . -B build/n3ds -DPLATFORM=n3ds -DCMAKE_BUILD_TYPE=Release
-   cmake --build build/n3ds
-   ```
-   Esto genera `cinnamon.3dsx`.
-7. **Probar.** En una 3DS con Luma3DS/homebrew launcher, o en el emulador
-   Citra/Azahar si no tenés la consola modeada a mano. Copiar `cinnamon.3dsx`
-   más la carpeta de assets generada a `sdmc:/3ds/cinnamon`.
-
-## Estado actual: arranca y suena, pero no responde a nada todavía
-
-Preguntamos por qué no había sonido, por qué la resolución se veía rara, y
-cómo se jugaba. Investigado:
-
-- **Audio**: configuración de Azahar normal, sin bug encontrado ahí.
-- **Resolución**: el juego declara **1280x720** en su GEN8 (leído directo del
-  header) contra los 400x240 de la pantalla superior de la 3DS. Al principio
-  parecía que el renderer no lo soportaba (hay una función literal
-  `N3DSRenderer_setTopBattle320x240Layout`, hardcodeada para las batallas de
-  Undertale), pero mirando `N3DSRenderer_computeFrameLayoutForTarget`
-  (`src/n3ds/n3ds_renderer.c:570`) resultó ser matemática de escalado
-  genérica y correcta (letterbox con proporción preservada, centrado) que ya
-  recibe el ancho/alto real del juego como parámetro. Probablemente esto
-  **no está roto** — nos quedamos sin poder confirmarlo del todo.
-- **Controles — este es el hallazgo real**: `grep` de todo `src/n3ds/` por
-  `hidTouchRead`/`mouse_x`/`mouse_y` da **cero resultados**. Cinnamon lee
-  botones (`hidScanInput()`) pero no tiene ninguna conexión de pantalla
-  táctil. Tiene sentido: Undertale, Deltarune y Pizza Tower —lo único que
-  soportó hasta ahora— se juegan con teclado/D-pad. VA-11 Hall-A es de mouse
-  de punta a punta, sin alternativa de teclado en el original.
-
-**Arreglo intentado** (idea del usuario, evita construir soporte táctil desde
-cero): la Vita tampoco tiene mouse, así que el port de Wolfgame necesita un
-esquema de navegación por botones ya programado *dentro del propio juego* —
-casi seguro sigue presente como una rama condicionada por `os_type` en el
-mismo bytecode que ya tenemos (los devs de GameMaker normalmente mantienen
-un solo proyecto con chequeos de plataforma en tiempo de ejecución, no
-versiones separadas por plataforma). Cinnamon ya define `OS_PSVITA` como
-constante real. Cambio aplicado en `src/vm_builtins.c` (case
-`BUILTIN_VAR_OS_TYPE`): el juego ahora recibe `OS_PSVITA` cuando consulta
-`os_type` en GML, mientras que `runner->osType` sigue en `OS_3DS` en todos
-los ~15 chequeos internos que Cinnamon usa para su propio renderizado de
-doble pantalla — un cambio quirúrgico, no un swap completo.
-
-**Sin verificar todavía.** Recompilado y probado: A, B (por si el botón
-"primario" de GameMaker sigue la convención Xbox/PlayStation, que en la 3DS
-sería B, no A — es un lío real y conocido entre layouts), X, Y, D-pad, Enter
-(Start), y clics de mouse en varias posiciones — nada avanzó la pantalla de
-selección de idioma. Puede que esa pantalla puntual sea de las pocas cosas
-que sí usan touch incluso en la Vita real (es un menú de una sola vez, no el
-loop principal de jugabilidad) — que no responda ahí no confirma que el
-arreglo esté mal, solo que probamos en el lugar equivocado.
-
-**Para retomar**: buscar la forma de saltar la pantalla de selección de
-idioma (¿hay un save con el idioma ya elegido? ¿tiene timeout?) para llegar
-a una pantalla donde sea más probable que el esquema de Vita realmente se
-use, antes de descartar el arreglo de `os_type`.
+- [Cinnamon](https://github.com/Project-Sunshine-Native/cinnamon) and
+  [Butterscotch](https://github.com/MrPowerGamerBR/Butterscotch) — the actual
+  GameMaker runtime reimplementation this all runs on. All credit for the 3DS
+  port working *at all* belongs to Project Sunshine and Butterscotch's
+  authors.
+- [pkg2zip](https://github.com/mmozeiko/pkg2zip) by mmozeiko — used early on
+  for PS Vita package extraction.
+- Sukeban Games — VA-11 Hall-A itself. Go buy it if you haven't:
+  [sukeban.moe](https://sukeban.moe).
