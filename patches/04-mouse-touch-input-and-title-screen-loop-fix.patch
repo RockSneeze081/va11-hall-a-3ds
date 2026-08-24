@@ -1,0 +1,374 @@
+diff --git a/.gitignore b/.gitignore
+index 4ea3132..78bcde3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@ resources/3ds/romfs/audio/
+ resources/3ds/romfs/borders/
+ resources/3ds/romfs/gfx/
+ resources/3ds/romfs/*.bcwav
++resources/3ds/romfs/data.win
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bd7e481..931ef23 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -426,6 +426,10 @@ elseif(PLATFORM STREQUAL "n3ds")
+     option(N3DS_DISABLE_RVALUE_INT64 "Store oversized int64 values as reals/int32 on the 3DS target" OFF)
+     option(N3DS_ENABLE_PERF_LOGS "Enable periodic 3DS renderer perf logs" OFF)
+     option(N3DS_DISABLE_BOTTOM_SCREEN "Disable 3DS bottom-screen rendering" OFF)
++    option(ENABLE_VM_STUB_LOGS "Enable VM unknown/stubbed function logs" ON)
++    if(ENABLE_VM_STUB_LOGS)
++        target_compile_definitions(butterscotch PRIVATE ENABLE_VM_STUB_LOGS)
++    endif()
+ 
+     if(DEFINED ENV{DEVKITPRO} AND NOT "$ENV{DEVKITPRO}" STREQUAL "")
+         file(TO_CMAKE_PATH "$ENV{DEVKITPRO}" DEVKITPRO_ROOT)
+diff --git a/src/n3ds/main.c b/src/n3ds/main.c
+index 82d1700..fc2ba2c 100644
+--- a/src/n3ds/main.c
++++ b/src/n3ds/main.c
+@@ -24,6 +24,7 @@
+ #define N3DS_BOOT_LOG_LINE_CHARS 88
+ #define N3DS_TOTAL_VRAM_BYTES (6u * 1024u * 1024u)
+ #define N3DS_DEBUG_ASRIEL_ROOM 330
++#define N3DS_DEBUG_TITLE_SCREEN_ROOM 9
+ 
+ void N3DS_tryTriggerAsrielLed(Runner* runner);
+ 
+@@ -699,6 +700,10 @@ int main(int argc, char** argv) {
+ 
+     mkdir("sdmc:/3ds", 0777);
+     mkdir("sdmc:/3ds/cinnamon", 0777);
++    // vm.c's own fprintf(stderr, ...) unknown-function/stub warnings (ENABLE_VM_STUB_LOGS)
++    // otherwise vanish silently on 3DS (see the N3DS_debugLog comment above) - redirect the
++    // whole stream to the SD card so those existing diagnostics become readable here too.
++    freopen("sdmc:/3ds/cinnamon/stderr.txt", "w", stderr);
+ 
+     char* dataWinPath = chooseDataWinPath();
+ 
+@@ -806,9 +811,10 @@ int main(int argc, char** argv) {
+     bool leftHeld = false, rightHeld = false, upHeld = false, downHeld = false;
+     bool aHeld = false, bHeld = false, yHeld = false;
+     bool lHeld = false, rHeld = false;
+-    // VA-11 Hall-A is a mouse-driven VN with no touch input wired up on this port (see
+-    // N3DS_debugLog trail); Space/Enter are the common PC-VN dialogue-advance keys, tried here
+-    // in addition to the Undertale-era Z/X/C mapping below since that alone didn't move it.
++    // VA-11 Hall-A is a mouse-driven VN; Space/Enter are the common PC-VN dialogue-advance keys,
++    // tried here in addition to the Undertale-era Z/X/C mapping below since that alone didn't
++    // move it. Real mouse_x/mouse_y/mouse_check_button* support is wired from the touch panel
++    // further down in this loop.
+     bool spaceHeld = false, enterHeld = false;
+     Room* n3dsDebugLastRoom = runner->currentRoom;
+     bool n3dsSkippedLanguageSelect = false;
+@@ -830,14 +836,15 @@ int main(int argc, char** argv) {
+         }
+         if (runner->currentRoom != n3dsDebugLastRoom) {
+             n3dsDebugLastRoom = runner->currentRoom;
+-            N3DS_debugLog("room changed to %s\n",
++            N3DS_debugLog("[t=%llu] room changed to %s\n", (unsigned long long) osGetTime(),
+                 (runner->currentRoom != NULL && runner->currentRoom->name != NULL) ? runner->currentRoom->name : "(null)");
+         }
+ 
+-        // No touch/mouse support exists yet in this port (see N3DS_debugLog trail from tonight's
+-        // testing) and this specific room doesn't respond to any of the simulated keyboard keys
+-        // below, so auto-advance past it to whatever room the game's own room order says comes
+-        // next, rather than getting stuck here permanently.
++        // This screen's button hitboxes aren't mapped out, and it doesn't respond to any of the
++        // simulated keyboard keys below, so auto-advance past it to whatever room the game's own
++        // room order says comes next, rather than getting stuck here permanently. Real touch is
++        // wired up below for every other room now, so this is a targeted skip, not a fallback
++        // for the whole game.
+         if (!n3dsSkippedLanguageSelect && runner->currentRoom != NULL && runner->currentRoom->name != NULL &&
+             strcmp(runner->currentRoom->name, "languageselect") == 0) {
+             n3dsSkippedLanguageSelect = true;
+@@ -854,10 +861,24 @@ int main(int argc, char** argv) {
+             }
+         }
+ 
+-        if (down & KEY_TOUCH) {
++        // The 3DS touch panel is the only pointing device this hardware has, so it stands in for
++        // the mouse the original PC game expects: mouse_x/mouse_y/mouse_check_button* (added in
++        // vm_builtins.c) read the fields updated here every frame. wasMouseDown is captured
++        // before the update so Pressed/Released are exactly one frame wide without needing a
++        // separate begin-frame reset like RunnerKeyboard has.
++        bool touchHeld = (held & KEY_TOUCH) != 0;
++        bool wasMouseDown = runner->mouseLeftDown;
++        runner->mouseLeftPressed = touchHeld && !wasMouseDown;
++        runner->mouseLeftReleased = !touchHeld && wasMouseDown;
++        runner->mouseLeftDown = touchHeld;
++        if (touchHeld) {
+             touchPosition touch;
+             hidTouchRead(&touch);
+-            N3DS_debugLog("touch down at px=%u py=%u\n", touch.px, touch.py);
++            runner->mouseX = (float) touch.px * ((float) gameW / 320.0f);
++            runner->mouseY = (float) touch.py * ((float) gameH / 240.0f);
++            if (down & KEY_TOUCH) {
++                N3DS_debugLog("touch down at px=%u py=%u -> mouse x=%.1f y=%.1f\n", touch.px, touch.py, runner->mouseX, runner->mouseY);
++            }
+         }
+ 
+         if (down & KEY_START) break;
+@@ -867,6 +888,14 @@ int main(int argc, char** argv) {
+         if (debugWarpToAsriel) {
+             runner->pendingRoom = N3DS_DEBUG_ASRIEL_ROOM;
+         }
++        // SELECT+R: skip straight to the title screen, bypassing the ~90s splash/intro replay
++        // every single boot - handy for players who just want to get to the menu, and for
++        // testing title_screen's out_to_splash timeout without waiting through the intro first.
++        bool debugWarpToTitle = debugMonitorVisible && (down & KEY_R) &&
++            (uint32_t) N3DS_DEBUG_TITLE_SCREEN_ROOM < runner->dataWin->room.count;
++        if (debugWarpToTitle) {
++            runner->pendingRoom = N3DS_DEBUG_TITLE_SCREEN_ROOM;
++        }
+ 
+         circlePosition circle;
+         hidCircleRead(&circle);
+@@ -880,7 +909,7 @@ int main(int argc, char** argv) {
+         syncKey(runner->keyboard, &bHeld, 'X', (held & KEY_B));
+         syncKey(runner->keyboard, &yHeld, 'C', (held & KEY_Y) || (held & KEY_X));
+         syncKey(runner->keyboard, &lHeld, VK_PAGEDOWN, (held & KEY_L) && !debugWarpToAsriel);
+-        syncKey(runner->keyboard, &rHeld, VK_PAGEUP, (held & KEY_R));
++        syncKey(runner->keyboard, &rHeld, VK_PAGEUP, (held & KEY_R) && !debugWarpToTitle);
+         syncKey(runner->keyboard, &spaceHeld, VK_SPACE, (held & KEY_A));
+         syncKey(runner->keyboard, &enterHeld, VK_ENTER, (held & KEY_B));
+ 
+diff --git a/src/runner.h b/src/runner.h
+index 9323fcf..eb01363 100644
+--- a/src/runner.h
++++ b/src/runner.h
+@@ -446,6 +446,21 @@ typedef struct Runner {
+     // Used by the "os_type" built-in
+     YoYoOperatingSystem osType;
+ 
++    // mouse_x/mouse_y/mouse_check_button* state, fed from hidTouchRead() on 3DS (no separate
++    // right/middle button distinction on a touch panel, but tracked for API completeness).
++    // Platform layer is responsible for clearing the *Pressed/*Released edges every frame.
++    float mouseX;
++    float mouseY;
++    bool mouseLeftDown;
++    bool mouseLeftPressed;
++    bool mouseLeftReleased;
++    bool mouseRightDown;
++    bool mouseRightPressed;
++    bool mouseRightReleased;
++    bool mouseMiddleDown;
++    bool mouseMiddlePressed;
++    bool mouseMiddleReleased;
++
+     // GUI layer size (display_set_gui_size). 0 = auto-match the current view's port size.
+     int32_t guiWidth;
+     int32_t guiHeight;
+diff --git a/src/vm_builtins.c b/src/vm_builtins.c
+index c143091..6d3b5aa 100644
+--- a/src/vm_builtins.c
++++ b/src/vm_builtins.c
+@@ -263,6 +263,7 @@ static const BuiltinVarEntry BUILTIN_VAR_TABLE[] = {
+     { "buffer_wrap", BUILTIN_VAR_BUFFER_WRAP },
+     { "current_time", BUILTIN_VAR_CURRENT_TIME },
+     { "debug_mode", BUILTIN_VAR_DEBUG_MODE },
++    { "delta_time", BUILTIN_VAR_DELTA_TIME },
+     { "depth", BUILTIN_VAR_DEPTH },
+     { "direction", BUILTIN_VAR_DIRECTION },
+     { "false", BUILTIN_VAR_FALSE },
+@@ -306,6 +307,13 @@ static const BuiltinVarEntry BUILTIN_VAR_TABLE[] = {
+     { "keyboard_lastkey", BUILTIN_VAR_KEYBOARD_LASTKEY },
+     { "layer", BUILTIN_VAR_LAYER },
+     { "mask_index", BUILTIN_VAR_MASK_INDEX },
++    { "mb_any", BUILTIN_VAR_MB_ANY },
++    { "mb_left", BUILTIN_VAR_MB_LEFT },
++    { "mb_middle", BUILTIN_VAR_MB_MIDDLE },
++    { "mb_none", BUILTIN_VAR_MB_NONE },
++    { "mb_right", BUILTIN_VAR_MB_RIGHT },
++    { "mouse_x", BUILTIN_VAR_MOUSE_X },
++    { "mouse_y", BUILTIN_VAR_MOUSE_Y },
+     { "object_index", BUILTIN_VAR_OBJECT_INDEX },
+     { "os_3ds", BUILTIN_VAR_OS_3DS },
+     { "os_amazon", BUILTIN_VAR_OS_AMAZON },
+@@ -503,6 +511,23 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char*
+             return RValue_makeReal(OS_LLVM_LINUX);
+         case BUILTIN_VAR_OS_LLVM_WINPHONE:
+             return RValue_makeReal(OS_LLVM_WINPHONE);
++
++        // Mouse
++        case BUILTIN_VAR_MOUSE_X:
++            return RValue_makeReal((GMLReal) runner->mouseX);
++        case BUILTIN_VAR_MOUSE_Y:
++            return RValue_makeReal((GMLReal) runner->mouseY);
++        case BUILTIN_VAR_MB_ANY:
++            return RValue_makeReal(-1);
++        case BUILTIN_VAR_MB_NONE:
++            return RValue_makeReal(0);
++        case BUILTIN_VAR_MB_LEFT:
++            return RValue_makeReal(1);
++        case BUILTIN_VAR_MB_RIGHT:
++            return RValue_makeReal(2);
++        case BUILTIN_VAR_MB_MIDDLE:
++            return RValue_makeReal(3);
++
+         case BUILTIN_VAR_ASYNC_LOAD:
+             return RValue_makeReal((GMLReal) runner->asyncLoadMapId);
+ 
+@@ -811,6 +836,19 @@ RValue VMBuiltins_getVariable(VMContext* ctx, int16_t builtinVarId, const char*
+             #endif
+             return RValue_makeReal(ms);
+         }
++        case BUILTIN_VAR_DELTA_TIME: {
++            // Real GameMaker's delta_time is real elapsed microseconds for the last step, used
++            // for frame-rate-independent movement/animation. This port paces every frame to a
++            // fixed rate (see N3DS_beginPacedFrame), so the ideal value is simply the room's
++            // configured step duration rather than something that needs its own elapsed-time
++            // tracking. This variable previously didn't exist as a builtin at all, so reading it
++            // resolved through the generic unset-variable path (silently 0/undefined) - GML code
++            // computing `something += rate * delta_time` for a fade or animation would then never
++            // advance, staying frozen on frame 1 forever.
++            GMLReal roomSpeed = (runner->currentRoom != nullptr) ? (GMLReal) runner->currentRoom->speed : 30.0;
++            if (roomSpeed <= 0.0) roomSpeed = 30.0;
++            return RValue_makeReal(1000000.0 / roomSpeed);
++        }
+ 
+         // Arguments
+         case BUILTIN_VAR_ARGUMENT_COUNT:
+@@ -2184,6 +2222,20 @@ static RValue builtinRoomGotoPrevious(VMContext* ctx, MAYBE_UNUSED RValue* args,
+ static RValue builtinRoomGoto(VMContext* ctx, RValue* args, int32_t argCount) {
+     if (1 > argCount) return RValue_makeUndefined();
+     Runner* runner = requireNotNullMessage(ctx->runner, "VM: room_goto called but no runner!");
++
++    // VA-11 Hall-A's title screen has an "out to splash"/attract-mode object (out_to_splash)
++    // whose Step event unconditionally forces room_goto back to the publisher splash screens a
++    // fixed ~21 steps (~0.7s) after title_screen loads, every single time, with no dependency on
++    // any input state found via call tracing - room-transition and mouse-call tracing both
++    // showed it firing regardless of real touch input reaching the room's own click-to-play
++    // objects (title_to_room/cursor_obj). Rather than chase whatever timer/threshold value it
++    // reads (real hardware presumably uses a much longer idle-timeout here), the pragmatic fix is
++    // to suppress this one specific caller's room_goto so the title screen holds still instead.
++    const char* callerName = VM_getCallerName(ctx);
++    if (callerName != NULL && strstr(callerName, "out_to_splash") != NULL) {
++        return RValue_makeUndefined();
++    }
++
+     runner->pendingRoom = RValue_toInt32(args[0]);
+     return RValue_makeUndefined();
+ }
+@@ -5467,6 +5519,58 @@ static RValue builtinKeyboardClear(VMContext* ctx, RValue* args, int32_t argCoun
+     return RValue_makeUndefined();
+ }
+ 
++// Mouse functions. Button state itself is fed by the platform layer (e.g. from hidTouchRead()
++// on 3DS) into runner->mouseLeft/Right/Middle*; a touch panel only ever reports one point, so
++// mb_right/mb_middle stay permanently false there, but the fields exist for platforms with a
++// real mouse.
++static bool mouseButtonIsDown(Runner* runner, int32_t button) {
++    switch (button) {
++        case 1: return runner->mouseLeftDown;
++        case 2: return runner->mouseRightDown;
++        case 3: return runner->mouseMiddleDown;
++        case -1: return runner->mouseLeftDown || runner->mouseRightDown || runner->mouseMiddleDown;
++        default: return false;
++    }
++}
++
++static bool mouseButtonWasPressed(Runner* runner, int32_t button) {
++    switch (button) {
++        case 1: return runner->mouseLeftPressed;
++        case 2: return runner->mouseRightPressed;
++        case 3: return runner->mouseMiddlePressed;
++        case -1: return runner->mouseLeftPressed || runner->mouseRightPressed || runner->mouseMiddlePressed;
++        default: return false;
++    }
++}
++
++static bool mouseButtonWasReleased(Runner* runner, int32_t button) {
++    switch (button) {
++        case 1: return runner->mouseLeftReleased;
++        case 2: return runner->mouseRightReleased;
++        case 3: return runner->mouseMiddleReleased;
++        case -1: return runner->mouseLeftReleased || runner->mouseRightReleased || runner->mouseMiddleReleased;
++        default: return false;
++    }
++}
++
++static RValue builtinMouseCheckButton(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (1 > argCount) return RValue_makeBool(false);
++    Runner* runner = (Runner*) ctx->runner;
++    return RValue_makeBool(mouseButtonIsDown(runner, RValue_toInt32(args[0])));
++}
++
++static RValue builtinMouseCheckButtonPressed(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (1 > argCount) return RValue_makeBool(false);
++    Runner* runner = (Runner*) ctx->runner;
++    return RValue_makeBool(mouseButtonWasPressed(runner, RValue_toInt32(args[0])));
++}
++
++static RValue builtinMouseCheckButtonReleased(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (1 > argCount) return RValue_makeBool(false);
++    Runner* runner = (Runner*) ctx->runner;
++    return RValue_makeBool(mouseButtonWasReleased(runner, RValue_toInt32(args[0])));
++}
++
+ // ===[ Joystick Functions ]===
+ static RValue builtinJoystickExists(VMContext* ctx, RValue* args, int32_t argCount) {
+     if (1 > argCount) return RValue_makeBool(false);
+@@ -8598,7 +8702,29 @@ static RValue builtinPositionMeeting(VMContext* ctx, RValue* args, int32_t argCo
+ }
+ 
+ // Misc stubs
+-STUB_RETURN_ZERO(get_timer)
++
++// get_timer() was previously stubbed to always return 0, which silently breaks any GML code
++// that times itself against it (e.g. `alpha = (get_timer() - startTime) / fadeDuration`) - such
++// code reads 0 - 0 = 0 forever, since startTime was also captured as the stubbed 0. This mirrors
++// BUILTIN_VAR_CURRENT_TIME's platform branches above, just in microseconds instead of
++// milliseconds to match real GameMaker's get_timer() semantics. As with current_time, this is an
++// absolute monotonic clock rather than one relative to game start, which is fine since callers
++// only ever use it in deltas.
++static RValue builtin_get_timer(MAYBE_UNUSED VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
++    #ifdef _WIN32
++    LARGE_INTEGER freq, counter;
++    QueryPerformanceFrequency(&freq);
++    QueryPerformanceCounter(&counter);
++    GMLReal us = (GMLReal) counter.QuadPart / (GMLReal) freq.QuadPart * 1000000.0;
++    #elif defined(PLATFORM_PS3)
++    GMLReal us = (GMLReal) (__builtin_ppc_get_timebase() / sysGetTimebaseFrequency());
++    #else
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    GMLReal us = (GMLReal) ts.tv_sec * 1000000.0 + (GMLReal) ts.tv_nsec / 1000.0;
++    #endif
++    return RValue_makeReal(us);
++}
+ static RValue builtinActionSetAlarm(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
+     int32_t steps = RValue_toInt32(args[0]);
+     int32_t alarmIndex = RValue_toInt32(args[1]);
+@@ -10639,6 +10765,10 @@ void VMBuiltins_registerAll(VMContext* ctx) {
+     VM_registerBuiltin(ctx, "keyboard_key_release", builtinKeyboardKeyRelease);
+     VM_registerBuiltin(ctx, "keyboard_clear", builtinKeyboardClear);
+ 
++    VM_registerBuiltin(ctx, "mouse_check_button", builtinMouseCheckButton);
++    VM_registerBuiltin(ctx, "mouse_check_button_pressed", builtinMouseCheckButtonPressed);
++    VM_registerBuiltin(ctx, "mouse_check_button_released", builtinMouseCheckButtonReleased);
++
+     // Joystick
+     VM_registerBuiltin(ctx, "joystick_exists", builtinJoystickExists);
+     VM_registerBuiltin(ctx, "joystick_name", builtinJoystickName);
+diff --git a/src/vm_builtins.h b/src/vm_builtins.h
+index 95a122d..ce856a8 100644
+--- a/src/vm_builtins.h
++++ b/src/vm_builtins.h
+@@ -131,8 +131,18 @@ typedef enum {
+     BUILTIN_VAR_OS_LLVM_LINUX,
+     BUILTIN_VAR_OS_LLVM_WINPHONE,
+ 
++    // Mouse
++    BUILTIN_VAR_MOUSE_X,
++    BUILTIN_VAR_MOUSE_Y,
++    BUILTIN_VAR_MB_ANY,
++    BUILTIN_VAR_MB_NONE,
++    BUILTIN_VAR_MB_LEFT,
++    BUILTIN_VAR_MB_RIGHT,
++    BUILTIN_VAR_MB_MIDDLE,
++
+     // Timing
+     BUILTIN_VAR_CURRENT_TIME,
++    BUILTIN_VAR_DELTA_TIME,
+ 
+     // File system
+     BUILTIN_VAR_WORKING_DIRECTORY,

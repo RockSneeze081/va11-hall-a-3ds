@@ -3,8 +3,13 @@
 Getting *VA-11 Hall-A: Cyberpunk Bartender Action* running on Nintendo 3DS
 homebrew, via [Cinnamon](https://github.com/Project-Sunshine-Native/cinnamon),
 an open-source reimplementation of the GameMaker: Studio runtime for 3DS and
-Wii U. The result: the game boots, has working audio, and buttons correctly
-drive the real intro, publisher logo, and title screen.
+Wii U. The result: the game boots, has working audio, and real mouse/touch
+input (buttons *and* the touch panel) correctly drives the intro, publisher
+logo, and title screen, which now holds still instead of forcing itself back
+into the intro every ~0.7 seconds. The title screen currently renders as a
+black screen — game logic and input both work, the art just isn't drawing —
+see problem #5 below; it's the one open item standing between this and
+actual gameplay.
 
 **This repo contains no game data.** Like ScummVM, RPCS3, or Citra, this is
 tooling that runs *your own* legally-purchased copy of the game — you supply
@@ -112,12 +117,13 @@ Two more things came out of the same investigation:
   called), and the GML builtins `mouse_x`/`mouse_y` don't exist in this VM —
   unsurprising, since none of Cinnamon's prior target games use a mouse.
   Building that properly would mean adding new interpreter builtins, not
-  wiring up something that already exists.
+  wiring up something that already exists (done in problem #5, below).
 - The one screen that didn't respond to buttons turned out to be the *only*
-  one that needed a mouse. Once auto-skipped past it (see below), every
-  other screen tested — the real intro narration, the publisher logo, and
-  the title screen, all with correct character art and background rendering
-  — responded correctly to button presses.
+  one that needed a mouse for this specific auto-skip to matter. Once
+  auto-skipped past it, the real intro narration and publisher logo played
+  correctly. The title screen looked like it worked too — buttons visibly
+  cycled it — but that turned out to be a second, unrelated bug making it
+  loop regardless of input at all; see #5.
 
 **Fixes:**
 - Reused Cinnamon's own existing debug room-warp mechanism (already present
@@ -140,6 +146,61 @@ Two more things came out of the same investigation:
   buttons work in the main game, versus the Space/Enter mapping alone being
   sufficient, wasn't isolated — both were verified working together, not
   independently.
+
+### 5. Real mouse/touch input, and a title screen that quietly forced itself to loop
+
+Buttons alone got far enough to look finished — the title screen appeared,
+buttons visibly cycled through it — but a second play session immediately
+after publishing to GitHub surfaced a real problem: the intro kept repeating
+forever instead of ever reaching gameplay. First instinct was that this was
+just a side effect of a rapid `repeat: 15-20`-button-press test method
+landing on "New Game" over and over. A follow-up test with **zero input at
+all** ruled that out: the loop happened regardless, proving it wasn't
+input-driven at all.
+
+Two problems were tangled together here, and both needed fixing:
+
+**Mouse/touch didn't exist yet.** VA-11 Hall-A is mouse-driven; the button
+mapping in problem #4 was papering over that with keyboard simulation.
+`hidTouchRead()` was wired into the main loop, and GameMaker's real mouse API
+(`mouse_x`, `mouse_y`, `mb_left`/`mb_right`/`mb_middle`, and
+`mouse_check_button`/`_pressed`/`_released`) was implemented in the VM for
+the first time — previously, any script calling these got back `undefined`
+from Cinnamon's generic unknown-function fallback, silently. A real touch
+now correctly reaches the game: confirmed directly by adding temporary
+call-site tracing and watching specific in-game objects (`title_to_room`,
+`cursor_obj`) see a real `mouse_check_button_pressed(1) = true` follow an
+actual touch on the 3DS touch panel.
+
+**The title screen was looping on a fixed timer, not on input.** With mouse
+support in place, the title screen *still* cycled back into the intro every
+~0.7 seconds. The same call-site tracing that confirmed mouse input worked
+also caught the actual culprit red-handed: a GML object literally named
+`out_to_splash`, whose Step event unconditionally calls `room_goto()` back to
+the publisher splash screens roughly 21 steps after `title_screen` loads —
+every single time, with no observed dependency on any input state. This is
+presumably a very-long idle/attract-mode timeout in the original PC game;
+whatever value or clock it's actually reading, on this port it resolves to
+~0.7 seconds instead. Two Cinnamon builtins were suspects and got fixed
+regardless, since they were flatly broken either way — `get_timer()` and
+`delta_time` were both stubbed to always return `0`, which would permanently
+freeze any GML code that times something against them — but neither turned
+out to be what `out_to_splash` reads. Rather than keep reverse-engineering
+the exact mechanism, `room_goto()` now just no-ops when the calling script's
+name contains `out_to_splash`. The title screen now holds indefinitely under
+zero input, confirmed over multiple runs at both normal speed and an
+artificially slowed frame rate used while diagnosing this.
+
+**Known remaining issue, not yet fixed:** the title screen currently renders
+as a fully black screen on both the top and bottom 3DS displays. This is not
+a crash — the room loads normally (14 instances), the game loop keeps
+running at a steady 30 FPS, and input demonstrably reaches the room's own
+objects, as above. Every room before it (splash screens, intro narration —
+all with real character art and backgrounds) renders correctly, which points
+at something specific to `title_screen`'s own instances rather than a
+general rendering regression. Not yet root-caused; a real GML
+decompiler/disassembler would help here far more than further blind
+hypothesis-testing against individual builtin functions.
 
 ## Building it yourself
 
