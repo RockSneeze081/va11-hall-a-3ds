@@ -3,12 +3,20 @@
 Getting *VA-11 Hall-A: Cyberpunk Bartender Action* running on Nintendo 3DS
 homebrew, via [Cinnamon](https://github.com/Project-Sunshine-Native/cinnamon),
 an open-source reimplementation of the GameMaker: Studio runtime for 3DS and
-Wii U. The result: the game boots, has working audio, real mouse/touch input,
-and reaches actual playable gameplay — Jill's apartment, with real character
-art, dialogue, and a working menu. The title screen itself still has an
-unfixed rendering bug (renders black — see problem #5), so it's currently
-auto-skipped rather than fixed outright (problem #6); everything after it,
-which is most of the game, is unaffected.
+Wii U. In the Azahar emulator: the game boots, has working audio, real
+mouse/touch input, and reaches actual playable gameplay — Jill's apartment,
+with real character art, dialogue, and a working menu. The title screen
+itself still has an unfixed rendering bug (renders black — see problem #5),
+so it's currently auto-skipped rather than fixed outright (problem #6);
+everything after it, which is most of the game, is unaffected in the
+emulator.
+
+**Real hardware is a different story as of the latest test**: touch and
+buttons weren't working and the display looked wrong (small/illegible
+text) once actually booted on a real console. Not yet diagnosed — see
+[PATCHES.md](PATCHES.md)'s "Real-hardware status" note for the current
+leading theory. Everything above this paragraph describes emulator
+behavior only until that's resolved.
 
 **This repo contains no game data.** Like ScummVM, RPCS3, or Citra, this is
 tooling that runs *your own* legally-purchased copy of the game — you supply

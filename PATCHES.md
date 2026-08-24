@@ -1,13 +1,25 @@
 # Patches against Cinnamon
 
-Five small patches against
+Six small patches against
 [Project-Sunshine-Native/cinnamon](https://github.com/Project-Sunshine-Native/cinnamon)
 (`UNDERTALE-3DS` branch), applied on top of each other in order. The first
 three aren't VA-11 Hall-A-specific — they'd affect any GameMaker game with a
 resolution/audio profile different from Undertale/Deltarune/Pizza Tower.
 Patch 04 adds generic mouse/touch and timer support to the engine, plus one
 VA-11 Hall-A-specific workaround (matched by GML object name). Patch 05 is
-VA-11 Hall-A-specific (matched by room name).
+VA-11 Hall-A-specific (matched by room name). Patch 06 is generic (any room
+with an in-room camera view).
+
+**Real-hardware status (unverified as of this writing):** everything above
+was tested in the Azahar emulator only. A first real-3DS test reported
+touch/buttons not working and "weird resolution" with illegible text —
+still open, not yet diagnosed, likely something that behaves differently on
+real hardware vs. the emulator rather than anything patch 06 addresses (see
+its own note below). Leading theory: `C3D_Init`/`C2D_Init` failing on real
+hardware and silently falling back to the tiny built-in text-console path
+(`consoleInit` branch in `src/n3ds/main.c`'s `main()`), which would produce
+exactly this symptom set. Unconfirmed — waiting on a photo/video from real
+hardware to actually diagnose rather than guessing further.
 
 Apply with `git apply patches/01-*.patch` etc. from the root of a fresh
 `cinnamon` clone (branch `UNDERTALE-3DS`), or just read them — each is small.
@@ -114,3 +126,24 @@ correctly with real art, dialogue, and a working menu (confirmed by
 screenshot, not just room-name logging). This is a workaround for the
 still-unfixed issue in patch 04, not a fix for it, and is matched by room
 name (`title_screen`), so it's specific to this game.
+
+## [06 — touch coordinates respect the active room view](patches/06-touch-mapping-respects-active-view.patch)
+
+`src/n3ds/main.c`. The touch-to-`mouse_x`/`mouse_y` mapping from patch 04
+scaled `hidTouchRead()`'s panel coordinates directly against the full
+`gameW`x`gameH` logical canvas. Rooms with their own in-room camera view —
+a sub-rectangle of that canvas — only show and accept input for that
+sub-rectangle, so on such a room only the fraction of the touch panel
+proportional to the view's position/size would ever land on anything
+visible (e.g. a top-left-anchored sub-view means only the top-left of the
+panel does anything). Now reads `runner->drawViewX/Y/Width/Height` (falling
+back to the full canvas when no custom view is active) and maps the touch
+panel onto whatever room-space rectangle is actually on screen. Generic —
+applies to any room with a camera view, not VA-11 Hall-A-specific.
+
+Verified in Azahar against `title_screen` (which does have a 640×360 view)
+and `jill_room` (which turned out to use the full canvas, no custom view) —
+correct in both cases. Does **not** by itself explain the touch/button
+problems reported on real hardware (see the real-hardware status note
+above); `jill_room`, where those were reported, isn't the kind of room this
+patch changes anything for.

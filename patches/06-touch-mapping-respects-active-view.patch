@@ -1,0 +1,33 @@
+diff --git a/src/n3ds/main.c b/src/n3ds/main.c
+index 6d1c89c..8cb2ecf 100644
+--- a/src/n3ds/main.c
++++ b/src/n3ds/main.c
+@@ -898,10 +898,25 @@ int main(int argc, char** argv) {
+         if (touchHeld) {
+             touchPosition touch;
+             hidTouchRead(&touch);
+-            runner->mouseX = (float) touch.px * ((float) gameW / 320.0f);
+-            runner->mouseY = (float) touch.py * ((float) gameH / 240.0f);
++            // Map the touch panel onto whatever room-space rectangle is actually visible right
++            // now, not the full logical canvas. Rooms with their own in-room camera view (e.g.
++            // jill_room) only show a sub-rectangle of gameW x gameH - mapping touch against the
++            // full canvas meant only the fraction of the touch panel proportional to that
++            // sub-rectangle's position/size (e.g. its top-left corner) ever landed on anything
++            // visible. runner->drawView* holds the PREVIOUS frame's view (this runs before
++            // Runner_drawViews sets it for the current one), which is fine for a pointer position.
++            float viewX = 0.0f, viewY = 0.0f, viewW = (float) gameW, viewH = (float) gameH;
++            if (runner->drawViewBoundsValid) {
++                viewX = (float) runner->drawViewX;
++                viewY = (float) runner->drawViewY;
++                viewW = (float) runner->drawViewWidth;
++                viewH = (float) runner->drawViewHeight;
++            }
++            runner->mouseX = viewX + (float) touch.px * (viewW / 320.0f);
++            runner->mouseY = viewY + (float) touch.py * (viewH / 240.0f);
+             if (down & KEY_TOUCH) {
+-                N3DS_debugLog("touch down at px=%u py=%u -> mouse x=%.1f y=%.1f\n", touch.px, touch.py, runner->mouseX, runner->mouseY);
++                N3DS_debugLog("touch down at px=%u py=%u view=(%.0f,%.0f %.0fx%.0f) -> mouse x=%.1f y=%.1f\n",
++                    touch.px, touch.py, viewX, viewY, viewW, viewH, runner->mouseX, runner->mouseY);
+             }
+         }
+ 
