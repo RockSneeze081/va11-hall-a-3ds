@@ -150,6 +150,50 @@ si el port en sí está bien). El `.3dsx` en sí es el entregable correcto y
 completo del pipeline — Cinnamon no genera `.cia`, así que esto ya es
 "lo que se puede correr en 3DS" tal como lo distribuye el propio proyecto.
 
+## Resuelto: el juego corre completo — eran dos bugs concretos, no bytecode v15
+
+El cierre reproducible no tenía nada que ver con `ConfigureNew3DSCPU` (era
+ruido normal de arranque, presente en cualquier boot) ni con la versión de
+bytecode (nunca fue el problema real). Eran dos bugs identificados y
+arreglados:
+
+**Bug 1 — falta el `data.win` en el romfs de verdad.** `n3ds-preprocess`
+solo escribe `gfx/` y `audio/`; el motor en tiempo de ejecución
+(`chooseDataWinPath()` en `src/n3ds/main.c`) además necesita el
+`data.win` original completo en `romfs:/data.win` (para leer CODE, OBJT,
+ROOM, STRG — el preprocesador no convierte eso, solo gráficos y audio). Si
+no está, `DataWin_parse` en `src/data_win.c` llama a `exit(1)` directo al
+fallar el `fopen` — de ahí el cierre limpio y silencioso, sin pantalla de
+error ni crash de macOS. Arreglo: copiar el `data.win` real a
+`resources/3ds/romfs/data.win` antes de compilar.
+
+**Bug 2 — el banco de sonido no tenía límite de tamaño.** Con eso resuelto,
+crasheaba en el paso siguiente ("Loading sound bank"). El banco pesaba
+**872MB** porque `soundLooksLikeMusic()` (el heurístico de nombre que decide
+qué audio va empaquetado-en-memoria vs. streameado) clasificó mal ~48 pistas
+de música de fondo de 200-250 segundos como "efecto de sonido" — y esas se
+cargan enteras en RAM al arrancar. Una 3DS real tiene ~124-178MB de memoria
+de aplicación en total; 872MB nunca iba a entrar, cargarlo o no en romfs vs
+SD no cambiaba nada. Arreglo real en `tools/n3ds-preprocess/main.c`
+(`buildPackedSoundBank`): agregado `N3DS_SOUND_BANK_MAX_DURATION_SECONDS`
+(20s) — cualquier "efecto" más largo que eso se descarta del banco en vez de
+empaquetarse, con un mensaje explicando por qué. Resultado: 40 efectos
+reales, **8.0MB** en vez de 872MB.
+
+Con ambos arreglos: build final en
+[`dist/VA-11_Hall-A.3dsx`](../va11-3ds/dist/VA-11_Hall-A.3dsx) (1.46GB, la
+mayor parte texturas), probado en Azahar — llega a la pantalla de selección
+de idioma real del juego, 30 FPS, 100% de velocidad, sin cuelgues. Las ~48
+pistas de música descartadas por el filtro quedan mudas (huecos conocidos,
+no bloquean nada); serían candidatas a un streaming real más adelante si
+hace falta.
+
+Ambos bugs son genéricos (afectarían a cualquier port de un juego con
+diálogo/OST largo, no solo VA-11 Hall-A) — vale la pena reportarlos o mandar
+un PR a [Project-Sunshine-Native/cinnamon](https://github.com/Project-Sunshine-Native/cinnamon)
+si eso te interesa; no lo hice sin preguntar porque es publicar en un repo
+ajeno.
+
 ## Estado de este repo
 
 - `cinnamon/` — clone de Cinnamon, rama **`UNDERTALE-3DS`** (no `main`): `main`
