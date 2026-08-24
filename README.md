@@ -258,8 +258,51 @@ ajeno.
    Citra/Azahar si no tenés la consola modeada a mano. Copiar `cinnamon.3dsx`
    más la carpeta de assets generada a `sdmc:/3ds/cinnamon`.
 
-## Qué falta que hagas vos
+## Estado actual: arranca y suena, pero no responde a nada todavía
 
-Pasar el backup de Vita (o decirme la ruta/carpeta donde lo tenés en esta Mac,
-o el formato exacto: `.vpk` ya armado, o `.pkg`+`zRIF`) para correr el scanner y
-saber en qué punto del plan estamos parados realmente.
+Preguntamos por qué no había sonido, por qué la resolución se veía rara, y
+cómo se jugaba. Investigado:
+
+- **Audio**: configuración de Azahar normal, sin bug encontrado ahí.
+- **Resolución**: el juego declara **1280x720** en su GEN8 (leído directo del
+  header) contra los 400x240 de la pantalla superior de la 3DS. Al principio
+  parecía que el renderer no lo soportaba (hay una función literal
+  `N3DSRenderer_setTopBattle320x240Layout`, hardcodeada para las batallas de
+  Undertale), pero mirando `N3DSRenderer_computeFrameLayoutForTarget`
+  (`src/n3ds/n3ds_renderer.c:570`) resultó ser matemática de escalado
+  genérica y correcta (letterbox con proporción preservada, centrado) que ya
+  recibe el ancho/alto real del juego como parámetro. Probablemente esto
+  **no está roto** — nos quedamos sin poder confirmarlo del todo.
+- **Controles — este es el hallazgo real**: `grep` de todo `src/n3ds/` por
+  `hidTouchRead`/`mouse_x`/`mouse_y` da **cero resultados**. Cinnamon lee
+  botones (`hidScanInput()`) pero no tiene ninguna conexión de pantalla
+  táctil. Tiene sentido: Undertale, Deltarune y Pizza Tower —lo único que
+  soportó hasta ahora— se juegan con teclado/D-pad. VA-11 Hall-A es de mouse
+  de punta a punta, sin alternativa de teclado en el original.
+
+**Arreglo intentado** (idea del usuario, evita construir soporte táctil desde
+cero): la Vita tampoco tiene mouse, así que el port de Wolfgame necesita un
+esquema de navegación por botones ya programado *dentro del propio juego* —
+casi seguro sigue presente como una rama condicionada por `os_type` en el
+mismo bytecode que ya tenemos (los devs de GameMaker normalmente mantienen
+un solo proyecto con chequeos de plataforma en tiempo de ejecución, no
+versiones separadas por plataforma). Cinnamon ya define `OS_PSVITA` como
+constante real. Cambio aplicado en `src/vm_builtins.c` (case
+`BUILTIN_VAR_OS_TYPE`): el juego ahora recibe `OS_PSVITA` cuando consulta
+`os_type` en GML, mientras que `runner->osType` sigue en `OS_3DS` en todos
+los ~15 chequeos internos que Cinnamon usa para su propio renderizado de
+doble pantalla — un cambio quirúrgico, no un swap completo.
+
+**Sin verificar todavía.** Recompilado y probado: A, B (por si el botón
+"primario" de GameMaker sigue la convención Xbox/PlayStation, que en la 3DS
+sería B, no A — es un lío real y conocido entre layouts), X, Y, D-pad, Enter
+(Start), y clics de mouse en varias posiciones — nada avanzó la pantalla de
+selección de idioma. Puede que esa pantalla puntual sea de las pocas cosas
+que sí usan touch incluso en la Vita real (es un menú de una sola vez, no el
+loop principal de jugabilidad) — que no responda ahí no confirma que el
+arreglo esté mal, solo que probamos en el lugar equivocado.
+
+**Para retomar**: buscar la forma de saltar la pantalla de selección de
+idioma (¿hay un save con el idioma ya elegido? ¿tiene timeout?) para llegar
+a una pantalla donde sea más probable que el esquema de Vita realmente se
+use, antes de descartar el arreglo de `os_type`.
